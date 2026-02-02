@@ -15,23 +15,102 @@ constexpr uint32_t hash_initial = 0x811C9DC5;
 constexpr uint32_t hash_prime = 0x01000193;
 constexpr uint32_t mixing_constant = 0x9E3779B9;
 
-struct reader_t
-{
-    void peek(uint8_t* buffer, size_t n);
-    uint32_t peek_uint32_t();
-};
-
 inline void update_hash(uint32_t& hash, uint8_t byte)
 {
     hash = (hash ^ byte) * hash_prime;
 }
 
+struct reader_t
+{
+    uint8_t* code;
+    uint32_t code_length;
+    uint32_t ip;
+    uint32_t hash1;
+    uint32_t hash2;
+
+    void check_code_has(size_t n, char const* what)
+    {
+        if (ip + n > code_length)
+        {
+            failure("Expected %s at offset %zu, got end of bytecode", what, ip);
+        }
+    }
+
+    uint8_t next_code_byte()
+    {
+        uint8_t value;
+        read(&value, 1, "byte");
+        return value;
+    }
+
+    uint32_t next_code_uint32_t()
+    {
+        uint8_t buffer[4];
+        read(buffer, 4, "4-byte int");
+        uint32_t value = le_bytes_to_uint32_t(buffer);
+        return value;
+    }
+
+    void read(uint8_t* buffer, size_t n, char const* what)
+    {
+        check_code_has(n, what);
+        for (size_t i = 0; i < n; ++i)
+        {
+            uint8_t byte = code[ip + i];
+            buffer[i] = byte;
+            update_hash(hash1, byte);
+            update_hash(hash2, byte);
+        }
+        ip += n;
+    }
+};
+
+enum class instruction_flow
+{
+    /**
+     * Only the next instruction is directly reachable.
+     *
+     * This is the only flow that allows the current instruction
+     * to be considered as a beginning of a two-instruction sequence.
+     */
+    normal,
+
+    /**
+     * Both the next instruction and the target are directly reachable.
+     *
+     * The current instruction is not considered
+     * as a beginning of a two-instruction sequence.
+     *
+     * Note that this flow, despite its name,
+     * is also intended to be used for conditional jumps.
+     */
+    call,
+
+    /**
+     * The next instruction is not directly reachable.
+     * Naturally, the current instruction is not considered
+     * as a beginning of a two-instruction sequence.
+     *
+     * If the target is specified, it is considered directly reachable.
+     * For example, this is intended to be used for unconditional jumps.
+     */
+    stop
+};
+
+struct instruction_result
+{
+    /**
+     * UINT32_MAX means "no target".
+     */
+    uint32_t target;
+
+    instruction_flow flow;
+};
+
 struct hashtable_key
 {
     uint32_t ip;
     uint32_t length;
-
-    bool operator==(const hashtable_key& other) const;
 };
 
 struct hashtable_entry
@@ -39,7 +118,10 @@ struct hashtable_entry
     hashtable_key key;
     uint32_t value;
 
-    bool operator<(const hashtable_entry& other) const;
+    bool operator<(const hashtable_entry& other) const
+    {
+        return value < other.value;
+    }
 };
 
 struct hashtable
@@ -49,142 +131,75 @@ struct hashtable
 
     hashtable(uint32_t size);
 
-    void mark_occurrence(uint32_t hash, hashtable_key& key);
+    void mark_occurrence(uint8_t* code_ptr, uint32_t hash, uint32_t ip, uint32_t length);
 
     uint32_t pack();
 };
 
-template <typename... Instructions>
+template <typename Handler>
 struct analyzer
 {
-    static char const* opcode_description(uint8_t opcode)
+    uint8_t* code_ptr;
+    uint32_t code_size;
+    std::vector<bool> visited;
+    hashtable table;
+
+    analyzer(uint8_t* code_ptr, uint32_t code_size, uint32_t max_entries)
+        : code_ptr(code_ptr), code_size(code_size), visited(code_size, false),
+          table(max_entries / 3 * 4)
     {
-        char const* return_value = "unknown";
-        std::initializer_list<int>{
-            (opcode == Instructions::opcode ? (return_value = Instructions::description, 0) : 0)...
-        };
-        return return_value;
     }
 
-    static uint32_t get_args_length(uint8_t opcode)
+    void visit(uint32_t ip)
     {
-        uint32_t args_length = 0;
-        bool found = false;
-        std::initializer_list<int>{
-            (opcode == Instructions::opcode
-                 ? (args_length = Instructions::get_args_length(reader_t{}), found = true, 0)
-                 : 0)...
-        };
-        if (!found)
+        std::vector worklist{ip};
+
+        while (!worklist.empty())
         {
-            failure("Unknown instruction 0x%02X", opcode);
-        }
-        return args_length;
-    }
+            uint32_t ip = worklist.back();
+            worklist.pop_back();
+            reader_t reader = make_reader(ip);
+            reader.hash1 = hash_initial;
 
-    static void fill_bb_begins(std::vector<bool>& bb_begins)
-    {
-        std::vector<bool> instruction_begins(bb_begins.size(), false);
-        fill_instruction_begins(instruction_begins);
-        fill_bb_begins(instruction_begins, bb_begins);
-    }
+            for (uint32_t i = 0;; ++i)
+            {
+                uint32_t prev_ip = ip;
+                ip = reader.ip;
 
-    static void fill_instruction_begins(std::vector<bool>& instruction_begins)
-    {
-        ip = 0;
-        while (ip < code_length)
-        {
-            uint8_t opcode = next_code_byte();
-            bool found = false;
-            std::initializer_list<int>{
-                (opcode == Instructions::opcode
-                     ? (instruction_begins[ip - 1] = found = true,
-                        ip += Instructions::get_args_length(reader_t{}), 0)
-                     : 0)...
-            };
-            if (!found)
-            {
-                failure("Unknown instruction 0x%02X at offset %zu", opcode, ip - 1);
-            }
-        }
-    }
-
-    static void
-    fill_bb_begins(std::vector<bool> const& instruction_begins, std::vector<bool>& bb_begins)
-    {
-        bool is_bb_end = false;
-        ip = 0;
-        while (ip < code_length)
-        {
-            if (!instruction_begins[ip])
-            {
-                ++ip;
-                continue;
-            }
-            if (is_bb_end)
-            {
-                bb_begins[ip] = true;
-                is_bb_end = false;
-            }
-            uint32_t instruction_begin = ip;
-            uint32_t target_bb = UINT32_MAX;
-            uint8_t opcode = next_code_byte();
-            std::initializer_list<int>{
-                (opcode == Instructions::opcode
-                     ? (is_bb_end = Instructions::is_bb_end,
-                        target_bb = Instructions::get_target_bb(reader_t{}), 0)
-                     : 0)...
-            };
-            if (target_bb != UINT32_MAX)
-            {
-                if (target_bb >= instruction_begins.size() || !instruction_begins[target_bb])
+                if (visited[ip])
                 {
-                    failure(
-                        "Jump target 0x%08X at offset %zu is not an instruction start", target_bb,
-                        instruction_begin
-                    );
+                    break;
                 }
-                bb_begins[target_bb] = true;
+                visited[ip] = true;
+
+                reader.hash2 = reader.hash1;
+                reader.hash1 = hash_initial;
+
+                instruction_result result = Handler().interpret(reader);
+
+                table.mark_occurrence(code_ptr, reader.hash1, ip, reader.ip - ip);
+                if (i)
+                {
+                    table.mark_occurrence(code_ptr, reader.hash2, prev_ip, reader.ip - prev_ip);
+                }
+
+                if (result.target != UINT32_MAX)
+                {
+                    worklist.push_back(result.target);
+                }
+                if (result.flow != instruction_flow::normal)
+                {
+                    if (result.flow == instruction_flow::call && reader.ip < code_size)
+                    {
+                        worklist.push_back(reader.ip);
+                    }
+                    break;
+                }
             }
         }
     }
 
-    static void count_occurrences(std::vector<bool> const& bb_begins, hashtable& hashtable)
-    {
-        uint32_t hash = hash_initial;
-        hashtable_key key;
-
-        for (ip = 0; ip < code_length;)
-        {
-            hashtable_key prev_key;
-            prev_key.ip = key.ip;
-            uint32_t prev_hash = hash;
-
-            key.ip = ip;
-            hash = hash_initial;
-
-            uint8_t opcode = next_code_byte();
-            update_hash(prev_hash, opcode);
-            update_hash(hash, opcode);
-
-            uint32_t args_length = get_args_length(opcode);
-            for (uint32_t i = 0; i < args_length; i++)
-            {
-                uint8_t byte = next_code_byte();
-                update_hash(prev_hash, byte);
-                update_hash(hash, byte);
-            }
-
-            hashtable.mark_occurrence(hash, key);
-
-            if (!bb_begins[key.ip])
-            {
-                hashtable.mark_occurrence(prev_hash, prev_key);
-            }
-        }
-    }
-
-    static void print_hashtable(hashtable& table, uint32_t threshold)
+    void print_hashtable(uint32_t threshold)
     {
         uint32_t packed_size = table.pack();
         std::sort(table.entries.get(), table.entries.get() + packed_size);
@@ -195,20 +210,24 @@ struct analyzer
         for (; i < packed_size; ++i)
         {
             hashtable_entry& entry = table.entries[i];
+            reader_t reader = make_reader(entry.key.ip);
             printf("%u x", entry.value);
-            for (ip = entry.key.ip; ip < entry.key.ip + entry.key.length;)
+            while (reader.ip < entry.key.ip + entry.key.length)
             {
-                uint8_t opcode = next_code_byte();
-                printf(" %s", opcode_description(opcode));
-                uint32_t args_length = get_args_length(opcode);
-                for (uint32_t j = 0; j < args_length; ++j)
-                {
-                    uint8_t byte = next_code_byte();
-                    printf(" %02X", byte);
-                }
+                Handler().print(reader);
             }
             printf("\n");
         }
+    }
+
+  private:
+    reader_t make_reader(uint32_t ip)
+    {
+        reader_t reader;
+        reader.code = code_ptr;
+        reader.code_length = code_size;
+        reader.ip = ip;
+        return reader;
     }
 };
 

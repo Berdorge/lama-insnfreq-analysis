@@ -8,65 +8,46 @@ import instructions
 def test_file(file):
     print(f"Testing file: {file}")
 
-    bb_begins = set([0])
+    worklist = []
     with open(file, "rb") as f:
         stringtab_size = struct.unpack("i", f.read(4))[0]
         global_area_size = struct.unpack("i", f.read(4))[0]
         public_symbols_number = struct.unpack("i", f.read(4))[0]
         for _ in range(public_symbols_number):
             f.read(4)
-            bb_begin = struct.unpack("i", f.read(4))[0]
-            bb_begins.add(bb_begin)
+            public_ptr = struct.unpack("i", f.read(4))[0]
+            worklist.append(public_ptr)
         f.read(stringtab_size)
         code = f.read()
 
-    ip = 0
-    is_bb_end = False
-    while ip < len(code):
-        if is_bb_end:
-            bb_begins.add(ip)
-            is_bb_end = False
-        opcode = code[ip]
-        ip += 1
-        if opcode in [instructions.by_mnemonic["closure"][0]]:
-            target = struct.unpack("i", code[ip : ip + 4])[0]
-            bb_begins.add(target)
-        if opcode in [
-            instructions.by_mnemonic["jmp"][0],
-            instructions.by_mnemonic["cjmp_z"][0],
-            instructions.by_mnemonic["cjmp_nz"][0],
-            instructions.by_mnemonic["call"][0],
-        ]:
-            target = struct.unpack("i", code[ip : ip + 4])[0]
-            bb_begins.add(target)
-            is_bb_end = True
-        if opcode in [
-            instructions.by_mnemonic["end"][0],
-            instructions.by_mnemonic["ret"][0],
-            instructions.by_mnemonic["callc"][0],
-        ]:
-            is_bb_end = True
-        _, reader = instructions.by_opcode[opcode]
-        args = reader(code, ip)
-        ip += len(args)
-
     occurrences = {}
-    insn_bytes = None
-    ip = 0
-    while ip < len(code):
-        prev_insn_bytes = insn_bytes
-        opcode = code[ip]
-        ip += 1
-        _, reader = instructions.by_opcode[opcode]
+    visited = set()
+    while worklist:
+        ip = worklist.pop()
+
         insn = []
-        insn.append(opcode)
-        insn.extend(reader(code, ip))
-        ip += len(insn) - 1
-        insn_bytes = bytes(insn)
-        occurrences[insn_bytes] = occurrences.get(insn_bytes, 0) + 1
-        if (ip - len(insn)) not in bb_begins:
-            consecutive = prev_insn_bytes + insn_bytes
-            occurrences[consecutive] = occurrences.get(consecutive, 0) + 1
+        while True:
+            if ip in visited:
+                break
+            visited.add(ip)
+            prev_insn = insn
+
+            opcode = code[ip]
+            insn = [opcode]
+            _, reader = instructions.by_opcode[opcode]
+
+            args, is_break = reader(code, ip + 1, worklist)
+            insn.extend(args)
+            ip += len(insn)
+
+            insn_bytes = bytes(insn)
+            occurrences[insn_bytes] = occurrences.get(insn_bytes, 0) + 1
+            if prev_insn:
+                consecutive = bytes(prev_insn) + insn_bytes
+                occurrences[consecutive] = occurrences.get(consecutive, 0) + 1
+
+            if is_break:
+                break
 
     process = subprocess.Popen(
         ["build/lama-insnfreq-analysis", "--input", file, "--threshold", "1"],

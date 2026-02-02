@@ -3,37 +3,6 @@
 
 #include <cstring>
 
-void reader_t::peek(uint8_t* buffer, size_t n)
-{
-    check_code_has(n, "bytes");
-    for (size_t i = 0; i < n; i++)
-    {
-        buffer[i] = code_ptr[ip + i];
-    }
-}
-
-uint32_t reader_t::peek_uint32_t()
-{
-    uint32_t value = next_code_uint32_t();
-    ip -= 4;
-    return value;
-}
-
-bool hashtable_key::operator==(const hashtable_key& other) const
-{
-    if (length != other.length)
-    {
-        return false;
-    }
-    int diff = memcmp(&code_ptr[ip], &code_ptr[other.ip], length);
-    return diff == 0;
-}
-
-bool hashtable_entry::operator<(const hashtable_entry& other) const
-{
-    return value < other.value;
-}
-
 hashtable::hashtable(uint32_t size) : size(size), entries(new hashtable_entry[size]())
 {
     for (uint32_t i = 0; i < size; i++)
@@ -42,7 +11,24 @@ hashtable::hashtable(uint32_t size) : size(size), entries(new hashtable_entry[si
     }
 }
 
-static hashtable_entry& get_entry(hashtable& hashtable, uint32_t hash, hashtable_key& key)
+bool equals(uint8_t* code_ptr, hashtable_key const& key, uint32_t ip, uint32_t length)
+{
+    if (key.length != length)
+    {
+        return false;
+    }
+    for (uint32_t i = 0; i < length; ++i)
+    {
+        if (code_ptr[key.ip + i] != code_ptr[ip + i])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static hashtable_entry&
+get_entry(hashtable& hashtable, uint8_t* code_ptr, uint32_t hash, uint32_t ip, uint32_t length)
 {
     uint32_t index = (hash * mixing_constant) % hashtable.size;
     while (true)
@@ -51,7 +37,7 @@ static hashtable_entry& get_entry(hashtable& hashtable, uint32_t hash, hashtable
         {
             return hashtable.entries[index];
         }
-        if (hashtable.entries[index].key == key)
+        if (equals(code_ptr, hashtable.entries[index].key, ip, length))
         {
             return hashtable.entries[index];
         }
@@ -59,17 +45,17 @@ static hashtable_entry& get_entry(hashtable& hashtable, uint32_t hash, hashtable
     }
 }
 
-void hashtable::mark_occurrence(uint32_t hash, hashtable_key& key)
+void hashtable::mark_occurrence(uint8_t* code_ptr, uint32_t hash, uint32_t ip, uint32_t length)
 {
-    key.length = ip - key.ip;
-    hashtable_entry& entry = get_entry(*this, hash, key);
+    hashtable_entry& entry = get_entry(*this, code_ptr, hash, ip, length);
     if (entry.key.length)
     {
         entry.value++;
     }
     else
     {
-        entry.key = key;
+        entry.key.ip = ip;
+        entry.key.length = length;
         entry.value = 1;
     }
 }

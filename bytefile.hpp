@@ -4,20 +4,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 
-extern uint8_t* public_area_ptr;
-extern uint8_t* code_ptr;
-extern uint32_t public_symbols_number;
-extern uint32_t code_length;
-extern uint32_t ip;
+struct bytefile
+{
+    std::unique_ptr<uint8_t[]> content;
+    uint8_t* public_area_ptr;
+    uint8_t* code_ptr;
+    uint32_t stringtab_size;
+    uint32_t public_symbols_number;
+    uint32_t code_length;
+    uint32_t ip;
+};
 
-void read_file(FILE* f);
-
-void check_code_has(size_t n, char const* what);
-
-uint8_t next_code_byte();
-
-uint32_t next_code_uint32_t();
+bytefile read_file(FILE* f);
 
 inline uint32_t le_bytes_to_uint32_t(uint8_t const* bytes)
 {

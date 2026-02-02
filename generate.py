@@ -10,67 +10,64 @@ if len(sys.argv) != 2:
 min_file_size = int(sys.argv[1])
 
 instruction_lengths = {
-    "add": 0,
-    "sub": 0,
-    "mul": 0,
-    "div": 0,
-    "rem": 0,
-    "lt": 0,
-    "leq": 0,
-    "gt": 0,
-    "geq": 0,
-    "eq": 0,
-    "neq": 0,
-    "and": 0,
-    "or": 0,
-    "const": 4,
-    "string": 4,
-    "sexp": 8,
-    "sta": 0,
-    "jmp": 4,
-    "end": 0,
-    "ret": 0,
-    "drop": 0,
-    "dup": 0,
-    "swap": 0,
-    "elem": 0,
-    "ld_global": 4,
-    "ld_local": 4,
-    "ld_arg": 4,
-    "ld_capture": 4,
-    "st_global": 4,
-    "st_local": 4,
-    "st_arg": 4,
-    "st_capture": 4,
-    "cjmp_z": 4,
-    "cjmp_nz": 4,
-    "begin": 8,
-    "beginc": 8,
-    "closure": 8,
-    "callc": 4,
-    "call": 8,
-    "tag": 8,
-    "array": 4,
-    "fail": 8,
-    "line": 4,
-    "pattern_strcmp": 0,
-    "pattern_string": 0,
-    "pattern_array": 0,
-    "pattern_sexp": 0,
-    "pattern_boxed": 0,
-    "pattern_unboxed": 0,
-    "pattern_closure": 0,
-    "builtin_read": 0,
-    "builtin_write": 0,
-    "builtin_length": 0,
-    "builtin_string": 0,
-    "builtin_array": 4,
-    "stop": 0,
+    "ADD": 0,
+    "SUB": 0,
+    "MUL": 0,
+    "DIV": 0,
+    "REM": 0,
+    "LT": 0,
+    "LEQ": 0,
+    "GT": 0,
+    "GEQ": 0,
+    "EQ": 0,
+    "NEQ": 0,
+    "AND": 0,
+    "OR": 0,
+    "CONST": 4,
+    "STRING": 4,
+    "SEXP": 8,
+    "STA": 0,
+    "DROP": 0,
+    "DUP": 0,
+    "SWAP": 0,
+    "ELEM": 0,
+    "LD_GLOBAL": 4,
+    "LD_LOCAL": 4,
+    "LD_ARG": 4,
+    "LD_CAPTURE": 4,
+    "ST_GLOBAL": 4,
+    "ST_LOCAL": 4,
+    "ST_ARG": 4,
+    "ST_CAPTURE": 4,
+    "CJMP_Z": 4,
+    "CJMP_NZ": 4,
+    "BEGIN": 8,
+    "BEGINC": 8,
+    "CLOSURE": 8,
+    "CALLC": 4,
+    "CALL": 8,
+    "TAG": 8,
+    "ARRAY": 4,
+    "LINE": 4,
+    "PATTERN_STRCMP": 0,
+    "PATTERN_STRING": 0,
+    "PATTERN_ARRAY": 0,
+    "PATTERN_SEXP": 0,
+    "PATTERN_BOXED": 0,
+    "PATTERN_UNBOXED": 0,
+    "PATTERN_CLOSURE": 0,
+    "BUILTIN_READ": 0,
+    "BUILTIN_WRITE": 0,
+    "BUILTIN_LENGTH": 0,
+    "BUILTIN_STRING": 0,
+    "BUILTIN_ARRAY": 4,
 }
 
 instruction_mnemonics = list(instruction_lengths.keys())
 
 sys.stdout.buffer.write(struct.pack("i", 0))
+sys.stdout.buffer.write(struct.pack("i", 0))
+sys.stdout.buffer.write(struct.pack("i", 1))
 sys.stdout.buffer.write(struct.pack("i", 0))
 sys.stdout.buffer.write(struct.pack("i", 0))
 
@@ -87,10 +84,11 @@ while len(code) < min_file_size:
 
 for begin in insn_begins:
     mnemonic = instructions.by_opcode[code[begin]][0]
-    if mnemonic in ["jmp", "cjmp_z", "cjmp_nz", "call", "closure"]:
+    if mnemonic in ["JMP", "CJMP_Z", "CJMP_NZ", "CALL", "CLOSURE"]:
         target = random.choice(insn_begins)
         struct.pack_into("i", code, begin + 1, target)
-    if mnemonic in ["closure"]:
+    if mnemonic in ["CLOSURE"]:
         struct.pack_into("i", code, begin + 5, 0)
 
 sys.stdout.buffer.write(code)
+sys.stdout.buffer.write(bytes([0x16]))

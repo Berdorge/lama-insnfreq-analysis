@@ -34,8 +34,8 @@ The probing is linear. Other probings I've tried
 haven't yielded significant performance benefits.
 Even though profiling shows that
 `hashtable::mark_occurrence`
-(without including `memcmp` time mentioned below)
-takes about 35% of the total execution time.
+(without including `equals` time mentioned below)
+takes about 42% of the total execution time.
 
 Every hashtable entry stores an instruction pointer,
 the instruction length and the occurrence count.
@@ -43,18 +43,15 @@ It means that sometimes, in order to compare the keys,
 we need to read bytes from the code.
 But I believe this is a reasonable trade-off
 for memory efficiency. The profiling
-shows that `memcmp` takes about 7% of the total execution time.
+shows that `equals` takes about 12% of the total execution time.
 
 ## Analyzer abstraction
 
 The `analyzer` is abstracted away from
-instruction encoding through a template parameter pack.
-I was not able to make this a no-cost abstraction
-(compared to a simple `switch` statement),
-even though it's completely compile-time.
-
-The profiling shows that `fill_begins` takes
-about 10% of the total execution time.
+instruction encoding through a `Handler` template parameter.
+If I am not mistaken,
+this is a no-cost abstraction
+(compared to a simple `switch` statement).
 
 The things I decided to not abstract away are:
 - Reading public area. It is Lama-dependent and takes a bit of code.
@@ -88,29 +85,19 @@ is at most `8.53N + 1052672` bytes, which for
 
 The code itself takes `N` bytes.
 
-`bb_begins`, a bitset indicating where basic blocks begin
-so we don't concatenate two unrelated instructions,
-takes `N / 8` bytes.
+`worklist` takes at most `N` bytes for the content
+(worst case: every instruction is a jump)
+and at most `N` bytes for the `std::vector` capacity overhead.
 
 Finally, the total memory usage, for files that are not too small,
-is at most `11N`.
+is at most `12N`.
 
 ## Performance
 
-I got these results on my machine:
+I got the following results on my machine:
 ```bash
-$ python3 generate.py 1000000000 > test.bc
-$ time build/lama-insnfreq-analysis --input test.bc --threshold 1000000000
-build/lama-insnfreq-analysis --input test.bc --threshold 1000000000  40,11s user 2,50s system 99% cpu 42,612 total
+$ python3 generate.py 1000000000 > 1gb.bc
+$ time build/lama-insnfreq-analysis --input 1gb.bc --threshold 100000000
+build/lama-insnfreq-analysis --input 1gb.bc --threshold 100000000  24,79s user 2,10s system 99% cpu 26,889 total
 ```
-The max memory usage was 9.7 GB.
-
-It is possible to do
-```bash
-python3 generate.py 1000000000 | build/lama-insnfreq-analysis --threshold 1000000000
-```
-to omit writing the intermediate file to disk.
-
-But the `generate.py` is quite slow, so it's useful
-to have the intermediate file
-if you want to calculate average performance results.
+The max memory usage was 9.8 GB.
