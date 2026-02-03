@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <initializer_list>
 #include <memory>
 #include <vector>
@@ -141,60 +142,86 @@ struct analyzer
 {
     uint8_t* code_ptr;
     uint32_t code_size;
-    std::vector<bool> visited;
     hashtable table;
+    std::vector<bool> visited;
+    std::vector<bool> is_flow_continued;
 
     analyzer(uint8_t* code_ptr, uint32_t code_size, uint32_t max_entries)
-        : code_ptr(code_ptr), code_size(code_size), visited(code_size, false),
-          table(max_entries / 3 * 4)
+        : code_ptr(code_ptr), code_size(code_size), table(max_entries / 3 * 4),
+          visited(code_size, false), is_flow_continued(code_size, true)
     {
     }
 
-    void visit(uint32_t ip)
+    void find_reachable(uint32_t initial_ip)
     {
-        std::vector worklist{ip};
+        std::vector worklist{initial_ip};
 
         while (!worklist.empty())
         {
             uint32_t ip = worklist.back();
             worklist.pop_back();
-            reader_t reader = make_reader(ip);
-            reader.hash1 = hash_initial;
+            bool continue_flow = false;
+            is_flow_continued[ip] = false;
 
-            for (uint32_t i = 0;; ++i)
+            while (ip < code_size)
             {
-                uint32_t prev_ip = ip;
-                ip = reader.ip;
-
                 if (visited[ip])
                 {
                     break;
                 }
                 visited[ip] = true;
+                is_flow_continued[ip] = is_flow_continued[ip] && continue_flow;
+                continue_flow = false;
 
-                reader.hash2 = reader.hash1;
-                reader.hash1 = hash_initial;
-
-                instruction_result result = Handler().interpret(reader);
-
-                table.mark_occurrence(code_ptr, reader.hash1, ip, reader.ip - ip);
-                if (i)
-                {
-                    table.mark_occurrence(code_ptr, reader.hash2, prev_ip, reader.ip - prev_ip);
-                }
+                reader_t reader = make_reader(ip);
+                instruction_result result = Handler().describe_flow(reader);
+                Handler().print(reader, nullptr);
+                ip = reader.ip;
 
                 if (result.target != UINT32_MAX)
                 {
                     worklist.push_back(result.target);
                 }
-                if (result.flow != instruction_flow::normal)
+                if (result.flow == instruction_flow::normal)
                 {
-                    if (result.flow == instruction_flow::call && reader.ip < code_size)
-                    {
-                        worklist.push_back(reader.ip);
-                    }
+                    continue_flow = true;
+                }
+                if (result.flow == instruction_flow::call)
+                {
+                    worklist.push_back(ip);
+                }
+                if (result.flow == instruction_flow::stop)
+                {
                     break;
                 }
+            }
+        }
+    }
+
+    void count_occurrences()
+    {
+        reader_t reader = make_reader(0);
+        uint32_t current_ip = 0;
+        reader.hash1 = hash_initial;
+        for (; reader.ip < code_size;)
+        {
+            if (!visited[reader.ip])
+            {
+                ++reader.ip;
+                continue;
+            }
+
+            uint32_t prev_ip = current_ip;
+            current_ip = reader.ip;
+            reader.hash2 = reader.hash1;
+            reader.hash1 = hash_initial;
+
+            Handler().print(reader, nullptr);
+
+            table.mark_occurrence(code_ptr, reader.hash1, current_ip, reader.ip - current_ip);
+            if (is_flow_continued[current_ip])
+            {
+                table.mark_occurrence(code_ptr, reader.hash2, prev_ip, reader.ip - prev_ip);
             }
         }
     }
@@ -214,7 +241,8 @@ struct analyzer
             printf("%u x", entry.value);
             while (reader.ip < entry.key.ip + entry.key.length)
             {
-                Handler().print(reader);
+                printf(" ");
+                Handler().print(reader, stdout);
             }
             printf("\n");
         }

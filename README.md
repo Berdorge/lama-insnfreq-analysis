@@ -35,7 +35,7 @@ haven't yielded significant performance benefits.
 Even though profiling shows that
 `hashtable::mark_occurrence`
 (without including `equals` time mentioned below)
-takes about 42% of the total execution time.
+takes about 35% of the total execution time.
 
 Every hashtable entry stores an instruction pointer,
 the instruction length and the occurrence count.
@@ -43,7 +43,7 @@ It means that sometimes, in order to compare the keys,
 we need to read bytes from the code.
 But I believe this is a reasonable trade-off
 for memory efficiency. The profiling
-shows that `equals` takes about 12% of the total execution time.
+shows that `equals` takes about 10% of the total execution time.
 
 ## Analyzer abstraction
 
@@ -89,6 +89,8 @@ The code itself takes `N` bytes.
 (worst case: every instruction is a jump)
 and at most `N` bytes for the `std::vector` capacity overhead.
 
+`visited` and `is_flow_continued` bitset each take at most `N / 8` bytes.
+
 Finally, the total memory usage, for files that are not too small,
 is at most `12N`.
 
@@ -98,6 +100,6 @@ I got the following results on my machine:
 ```bash
 $ python3 generate.py 1000000000 > 1gb.bc
 $ time build/lama-insnfreq-analysis --input 1gb.bc --threshold 100000000
-build/lama-insnfreq-analysis --input 1gb.bc --threshold 100000000  24,79s user 2,10s system 99% cpu 26,889 total
+build/lama-insnfreq-analysis --input 1gb.bc --threshold 100000000  28,05s user 2,11s system 99% cpu 30,165 total
 ```
-The max memory usage was 9.8 GB.
+The max memory usage was 10 GB.
